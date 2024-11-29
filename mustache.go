@@ -39,6 +39,7 @@ const (
 	Section
 	InvertedSection
 	Partial
+	Block
 )
 
 // Skip all whitespaces apeared after these types of tags until end of line
@@ -60,6 +61,7 @@ var tagNames = []string{
 	Section:         "Section",
 	InvertedSection: "InvertedSection",
 	Partial:         "Partial",
+	Block:           "Block",
 }
 
 // Tag represents the different mustache tag types.
@@ -90,6 +92,7 @@ type varElement struct {
 type sectionElement struct {
 	name      string
 	inverted  bool
+	isBlock   bool
 	startline int
 	elems     []interface{}
 }
@@ -352,9 +355,9 @@ func (tmpl *Template) parseSection(section *sectionElement) error {
 		switch tag[0] {
 		case '!':
 			//ignore comment
-		case '#', '^':
+		case '#', '^', '$':
 			name := strings.TrimSpace(tag[1:])
-			se := sectionElement{name, tag[0] == '^', tmpl.curline, []interface{}{}}
+			se := sectionElement{name, tag[0] == '^', tag[0] == '$', tmpl.curline, []interface{}{}}
 			err := tmpl.parseSection(&se)
 			if err != nil {
 				return err
@@ -427,9 +430,9 @@ func (tmpl *Template) parse() error {
 		switch tag[0] {
 		case '!':
 			//ignore comment
-		case '#', '^':
+		case '#', '^', '$':
 			name := strings.TrimSpace(tag[1:])
-			se := sectionElement{name, tag[0] == '^', tmpl.curline, []interface{}{}}
+			se := sectionElement{name, tag[0] == '^', tag[0] == '$', tmpl.curline, []interface{}{}}
 			err := tmpl.parseSection(&se)
 			if err != nil {
 				return err
@@ -577,8 +580,10 @@ func (tmpl *Template) renderSection(section *sectionElement, contextChain []inte
 	var contexts = []interface{}{}
 	// if the value is nil, check if it's an inverted section
 	isEmpty := isEmpty(value)
-	if isEmpty && !section.inverted || !isEmpty && section.inverted {
+	if isEmpty && !section.inverted && !section.isBlock || !isEmpty && section.inverted && !section.isBlock {
 		return nil
+	} else if isEmpty && section.isBlock {
+		contexts = append(contexts, context)
 	} else if !section.inverted {
 		valueInd := indirect(value)
 		switch val := valueInd; val.Kind() {
@@ -664,6 +669,8 @@ func getElementText(element interface{}, buf io.Writer) error {
 	case *sectionElement:
 		if elem.inverted {
 			fmt.Fprintf(buf, "{{^%s}}", elem.name)
+		} else if elem.isBlock {
+			fmt.Fprintf(buf, "{{$%s}}", elem.name)
 		} else {
 			fmt.Fprintf(buf, "{{#%s}}", elem.name)
 		}
