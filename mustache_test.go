@@ -715,6 +715,8 @@ func compareTags(t *testing.T, actual []Tag, expected []tag) {
 			compareTags(t, tag.Tags(), expected[i].Tags)
 		case Partial:
 			compareTags(t, tag.Tags(), expected[i].Tags)
+		case Parent:
+			compareTags(t, tag.Tags(), expected[i].Tags)
 		case Invalid:
 			t.Errorf("invalid tag type: %s", tag.Type())
 			return

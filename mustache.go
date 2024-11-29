@@ -40,6 +40,7 @@ const (
 	InvertedSection
 	Partial
 	Block
+	Parent
 )
 
 // Skip all whitespaces apeared after these types of tags until end of line
@@ -62,6 +63,7 @@ var tagNames = []string{
 	InvertedSection: "InvertedSection",
 	Partial:         "Partial",
 	Block:           "Block",
+	Parent:          "Parent",
 }
 
 // Tag represents the different mustache tag types.
@@ -103,6 +105,14 @@ type partialElement struct {
 	prov   PartialProvider
 }
 
+type parentElement struct {
+	name      string
+	indent    string
+	startline int
+	prov      PartialProvider
+	elems     []interface{}
+}
+
 // Template represents a compilde mustache template
 type Template struct {
 	data     string
@@ -135,6 +145,8 @@ func extractTags(elems []interface{}) []Tag {
 		case *sectionElement:
 			tags = append(tags, elem)
 		case *partialElement:
+			tags = append(tags, elem)
+		case *parentElement:
 			tags = append(tags, elem)
 		}
 	}
@@ -177,6 +189,18 @@ func (e *partialElement) Name() string {
 }
 
 func (e *partialElement) Tags() []Tag {
+	return nil
+}
+
+func (e *parentElement) Type() TagType {
+	return Parent
+}
+
+func (e *parentElement) Name() string {
+	return e.name
+}
+
+func (e *parentElement) Tags() []Tag {
 	return nil
 }
 
@@ -327,7 +351,37 @@ func (tmpl *Template) parsePartial(name, indent string) (*partialElement, error)
 	}, nil
 }
 
-func (tmpl *Template) parseSection(section *sectionElement) error {
+func (tmpl *Template) parseParent(name, indent string) (*parentElement, error) {
+	return &parentElement{
+		name:   name,
+		indent: indent,
+		prov:   tmpl.partial,
+	}, nil
+}
+
+type sectionLike interface {
+	Startline() int
+	Name() string
+	AddElem(elem interface{})
+}
+
+func (e *sectionElement) Startline() int {
+	return e.startline
+}
+
+func (e *sectionElement) AddElem(elem interface{}) {
+	e.elems = append(e.elems, elem)
+}
+
+func (e *parentElement) Startline() int {
+	return e.startline
+}
+
+func (e *parentElement) AddElem(elem interface{}) {
+	e.elems = append(e.elems, elem)
+}
+
+func (tmpl *Template) parseSection(section sectionLike) error {
 	for {
 		textResult, err := tmpl.readText()
 		text := textResult.text
@@ -336,11 +390,11 @@ func (tmpl *Template) parseSection(section *sectionElement) error {
 
 		if err == io.EOF {
 			//put the remaining text in a block
-			return newErrorWithReason(section.startline, ErrSectionNoClosingTag, section.name)
+			return newErrorWithReason(section.Startline(), ErrSectionNoClosingTag, section.Name())
 		}
 
 		// put text into an item
-		section.elems = append(section.elems, &textElement{[]byte(text)})
+		section.AddElem(&textElement{[]byte(text)})
 
 		tagResult, err := tmpl.readTag(mayStandalone)
 		if err != nil {
@@ -348,7 +402,7 @@ func (tmpl *Template) parseSection(section *sectionElement) error {
 		}
 
 		if !tagResult.standalone {
-			section.elems = append(section.elems, &textElement{[]byte(padding)})
+			section.AddElem(&textElement{[]byte(padding)})
 		}
 
 		tag := tagResult.tag
@@ -362,10 +416,10 @@ func (tmpl *Template) parseSection(section *sectionElement) error {
 			if err != nil {
 				return err
 			}
-			section.elems = append(section.elems, &se)
+			section.AddElem(&se)
 		case '/':
 			name := strings.TrimSpace(tag[1:])
-			if name != section.name {
+			if name != section.Name() {
 				return newErrorWithReason(tmpl.curline, ErrInterleavedClosingTag, name)
 			}
 			return nil
@@ -375,7 +429,20 @@ func (tmpl *Template) parseSection(section *sectionElement) error {
 			if err != nil {
 				return err
 			}
-			section.elems = append(section.elems, partial)
+			section.AddElem(partial)
+		case '<':
+			name := strings.TrimSpace(tag[1:])
+			parent, err := tmpl.parseParent(name, textResult.padding)
+			if err != nil {
+				return err
+			}
+			parent.startline = tmpl.curline
+			parent.elems = []interface{}{}
+			err = tmpl.parseSection(parent)
+			if err != nil {
+				return err
+			}
+			section.AddElem(parent)
 		case '=':
 			if tag[len(tag)-1] != '=' {
 				return newError(tmpl.curline, ErrInvalidMetaTag)
@@ -390,13 +457,13 @@ func (tmpl *Template) parseSection(section *sectionElement) error {
 			if tag[len(tag)-1] == '}' {
 				//use a raw tag
 				name := strings.TrimSpace(tag[1 : len(tag)-1])
-				section.elems = append(section.elems, &varElement{name, true})
+				section.AddElem(&varElement{name, true})
 			}
 		case '&':
 			name := strings.TrimSpace(tag[1:])
-			section.elems = append(section.elems, &varElement{name, true})
+			section.AddElem(&varElement{name, true})
 		default:
-			section.elems = append(section.elems, &varElement{tag, tmpl.forceRaw})
+			section.AddElem(&varElement{tag, tmpl.forceRaw})
 		}
 	}
 }
@@ -447,6 +514,19 @@ func (tmpl *Template) parse() error {
 				return err
 			}
 			tmpl.elems = append(tmpl.elems, partial)
+		case '<':
+			name := strings.TrimSpace(tag[1:])
+			parent, err := tmpl.parseParent(name, textResult.padding)
+			if err != nil {
+				return err
+			}
+			parent.startline = tmpl.curline
+			parent.elems = []interface{}{}
+			err = tmpl.parseSection(parent)
+			if err != nil {
+				return err
+			}
+			tmpl.elems = append(tmpl.elems, parent)
 		case '=':
 			if tag[len(tag)-1] != '=' {
 				return newError(tmpl.curline, ErrInvalidMetaTag)
@@ -720,6 +800,14 @@ func (tmpl *Template) renderElement(element interface{}, contextChain []interfac
 			return err
 		}
 		if err := partial.renderTemplate(contextChain, buf); err != nil {
+			return err
+		}
+	case *parentElement:
+		parent, err := getPartials(elem.prov, elem.name, elem.indent)
+		if err != nil {
+			return err
+		}
+		if err := parent.renderTemplate(contextChain, buf); err != nil {
 			return err
 		}
 	}
