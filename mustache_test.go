@@ -209,6 +209,11 @@ var tests = []Test{
 
 	// inheritance
 	{`{{$title}}Default title{{/title}}`, map[string]interface{}{}, "Default title", nil},
+	{`{{$foo}}default {{bar}} content{{/foo}}`, map[string]string{"bar": "baz"}, "default baz content", nil},
+	{`{{$foo}}default {{{bar}}} content{{/foo}}`, map[string]string{"bar": "<baz>"}, "default <baz> content", nil},
+	{`{{$foo}}default {{#bar}}{{baz}}{{/bar}} content{{/foo}}`, map[string]interface{}{"bar": map[string]string{"baz": "qux"}}, "default qux content", nil},
+	{`{{$foo}}default {{^bar}}{{baz}}{{/bar}} content{{/foo}}`, map[string]string{"baz": "three"}, "default three content", nil},
+	{`{{$foo}}default {{#bar}}{{baz}}{{/bar}} content{{/foo}}`, map[string]interface{}{"bar": map[string]string{"baz": "{{qux}}"}}, "default {{qux}} content", nil},
 }
 
 func TestBasic(t *testing.T) {
