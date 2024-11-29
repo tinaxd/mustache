@@ -94,7 +94,6 @@ type varElement struct {
 type sectionElement struct {
 	name      string
 	inverted  bool
-	isBlock   bool
 	startline int
 	elems     []interface{}
 }
@@ -103,6 +102,12 @@ type partialElement struct {
 	name   string
 	indent string
 	prov   PartialProvider
+}
+
+type blockElement struct {
+	name      string
+	startline int
+	elems     []interface{}
 }
 
 type parentElement struct {
@@ -190,6 +195,18 @@ func (e *partialElement) Name() string {
 
 func (e *partialElement) Tags() []Tag {
 	return nil
+}
+
+func (e *blockElement) Type() TagType {
+	return Block
+}
+
+func (e *blockElement) Name() string {
+	return e.name
+}
+
+func (e *blockElement) Tags() []Tag {
+	return extractTags(e.elems)
 }
 
 func (e *parentElement) Type() TagType {
@@ -373,6 +390,14 @@ func (e *sectionElement) AddElem(elem interface{}) {
 	e.elems = append(e.elems, elem)
 }
 
+func (e *blockElement) Startline() int {
+	return e.startline
+}
+
+func (e *blockElement) AddElem(elem interface{}) {
+	e.elems = append(e.elems, elem)
+}
+
 func (e *parentElement) Startline() int {
 	return e.startline
 }
@@ -409,9 +434,9 @@ func (tmpl *Template) parseSection(section sectionLike) error {
 		switch tag[0] {
 		case '!':
 			//ignore comment
-		case '#', '^', '$':
+		case '#', '^':
 			name := strings.TrimSpace(tag[1:])
-			se := sectionElement{name, tag[0] == '^', tag[0] == '$', tmpl.curline, []interface{}{}}
+			se := sectionElement{name, tag[0] == '^', tmpl.curline, []interface{}{}}
 			err := tmpl.parseSection(&se)
 			if err != nil {
 				return err
@@ -430,6 +455,14 @@ func (tmpl *Template) parseSection(section sectionLike) error {
 				return err
 			}
 			section.AddElem(partial)
+		case '$':
+			name := strings.TrimSpace(tag[1:])
+			blk := blockElement{name, tmpl.curline, []interface{}{}}
+			err := tmpl.parseSection(&blk)
+			if err != nil {
+				return err
+			}
+			section.AddElem(&blk)
 		case '<':
 			name := strings.TrimSpace(tag[1:])
 			parent, err := tmpl.parseParent(name, textResult.padding)
@@ -497,9 +530,9 @@ func (tmpl *Template) parse() error {
 		switch tag[0] {
 		case '!':
 			//ignore comment
-		case '#', '^', '$':
+		case '#', '^':
 			name := strings.TrimSpace(tag[1:])
-			se := sectionElement{name, tag[0] == '^', tag[0] == '$', tmpl.curline, []interface{}{}}
+			se := sectionElement{name, tag[0] == '^', tmpl.curline, []interface{}{}}
 			err := tmpl.parseSection(&se)
 			if err != nil {
 				return err
@@ -514,6 +547,14 @@ func (tmpl *Template) parse() error {
 				return err
 			}
 			tmpl.elems = append(tmpl.elems, partial)
+		case '$':
+			name := strings.TrimSpace(tag[1:])
+			blk := blockElement{name, tmpl.curline, []interface{}{}}
+			err := tmpl.parseSection(&blk)
+			if err != nil {
+				return err
+			}
+			tmpl.elems = append(tmpl.elems, &blk)
 		case '<':
 			name := strings.TrimSpace(tag[1:])
 			parent, err := tmpl.parseParent(name, textResult.padding)
@@ -660,10 +701,8 @@ func (tmpl *Template) renderSection(section *sectionElement, contextChain []inte
 	var contexts = []interface{}{}
 	// if the value is nil, check if it's an inverted section
 	isEmpty := isEmpty(value)
-	if isEmpty && !section.inverted && !section.isBlock || !isEmpty && section.inverted && !section.isBlock {
+	if isEmpty && !section.inverted || !isEmpty && section.inverted {
 		return nil
-	} else if isEmpty && section.isBlock {
-		contexts = append(contexts, context)
 	} else if !section.inverted {
 		valueInd := indirect(value)
 		switch val := valueInd; val.Kind() {
@@ -727,6 +766,33 @@ func (tmpl *Template) renderSection(section *sectionElement, contextChain []inte
 	return nil
 }
 
+func (tmpl *Template) renderBlock(block *blockElement, contextChain []interface{}, buf io.Writer) error {
+	value, err := lookup(contextChain, block.name, true)
+	if err != nil {
+		return err
+	}
+	var context = contextChain[0].(reflect.Value)
+	var contexts = []interface{}{}
+	// if the value is nil, check if it's an inverted section
+	isEmpty := isEmpty(value)
+	if isEmpty {
+		// render default content
+		contexts = append(contexts, context)
+	}
+
+	chain2 := make([]interface{}, len(contextChain)+1)
+	copy(chain2[1:], contextChain)
+	for _, ctx := range contexts {
+		chain2[0] = ctx
+		for _, elem := range block.elems {
+			if err := tmpl.renderElement(elem, chain2, buf); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func getSectionText(elements []interface{}, buf io.Writer) error {
 	for _, element := range elements {
 		if err := getElementText(element, buf); err != nil {
@@ -749,11 +815,17 @@ func getElementText(element interface{}, buf io.Writer) error {
 	case *sectionElement:
 		if elem.inverted {
 			fmt.Fprintf(buf, "{{^%s}}", elem.name)
-		} else if elem.isBlock {
-			fmt.Fprintf(buf, "{{$%s}}", elem.name)
 		} else {
 			fmt.Fprintf(buf, "{{#%s}}", elem.name)
 		}
+		for _, nelem := range elem.elems {
+			if err := getElementText(nelem, buf); err != nil {
+				return err
+			}
+		}
+		fmt.Fprintf(buf, "{{/%s}}", elem.name)
+	case *blockElement:
+		fmt.Fprintf(buf, "{{$%s}}", elem.name)
 		for _, nelem := range elem.elems {
 			if err := getElementText(nelem, buf); err != nil {
 				return err
@@ -800,6 +872,10 @@ func (tmpl *Template) renderElement(element interface{}, contextChain []interfac
 			return err
 		}
 		if err := partial.renderTemplate(contextChain, buf); err != nil {
+			return err
+		}
+	case *blockElement:
+		if err := tmpl.renderBlock(elem, contextChain, buf); err != nil {
 			return err
 		}
 	case *parentElement:
