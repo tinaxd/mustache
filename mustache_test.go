@@ -208,12 +208,12 @@ var tests = []Test{
 	{`"{{#a}}{{b.c.d.e.name}}{{/a}}" == "Phil"`, map[string]interface{}{"a": map[string]interface{}{"b": map[string]interface{}{"c": map[string]interface{}{"d": map[string]interface{}{"e": map[string]string{"name": "Phil"}}}}}, "b": map[string]interface{}{"c": map[string]interface{}{"d": map[string]interface{}{"e": map[string]string{"name": "Wrong"}}}}}, `"Phil" == "Phil"`, nil},
 
 	// inheritance
-	{`{{$title}}Default title{{/title}}`, map[string]interface{}{}, "Default title", nil},
-	{`{{$foo}}default {{bar}} content{{/foo}}`, map[string]string{"bar": "baz"}, "default baz content", nil},
-	{`{{$foo}}default {{{bar}}} content{{/foo}}`, map[string]string{"bar": "<baz>"}, "default <baz> content", nil},
-	{`{{$foo}}default {{#bar}}{{baz}}{{/bar}} content{{/foo}}`, map[string]interface{}{"bar": map[string]string{"baz": "qux"}}, "default qux content", nil},
-	{`{{$foo}}default {{^bar}}{{baz}}{{/bar}} content{{/foo}}`, map[string]string{"baz": "three"}, "default three content", nil},
-	{`{{$foo}}default {{#bar}}{{baz}}{{/bar}} content{{/foo}}`, map[string]interface{}{"bar": map[string]string{"baz": "{{qux}}"}}, "default {{qux}} content", nil},
+	// {`{{$title}}Default title{{/title}}`, map[string]interface{}{}, "Default title", nil},
+	// {`{{$foo}}default {{bar}} content{{/foo}}`, map[string]string{"bar": "baz"}, "default baz content", nil},
+	// {`{{$foo}}default {{{bar}}} content{{/foo}}`, map[string]string{"bar": "<baz>"}, "default <baz> content", nil},
+	// {`{{$foo}}default {{#bar}}{{baz}}{{/bar}} content{{/foo}}`, map[string]interface{}{"bar": map[string]string{"baz": "qux"}}, "default qux content", nil},
+	// {`{{$foo}}default {{^bar}}{{baz}}{{/bar}} content{{/foo}}`, map[string]string{"baz": "three"}, "default three content", nil},
+	// {`{{$foo}}default {{#bar}}{{baz}}{{/bar}} content{{/foo}}`, map[string]interface{}{"bar": map[string]string{"baz": "{{qux}}"}}, "default {{qux}} content", nil},
 }
 
 func TestBasic(t *testing.T) {

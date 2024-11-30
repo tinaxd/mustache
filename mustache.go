@@ -593,6 +593,21 @@ func (tmpl *Template) parse() error {
 	}
 }
 
+type blockOverride struct {
+	name  string
+	elems []interface{}
+}
+
+func lookupBlockOverride(contextChain []interface{}, name string) (blockOverride, bool) {
+	for _, ctx := range contextChain {
+		bo, ok := ctx.(blockOverride)
+		if ok && bo.name == name {
+			return bo, true
+		}
+	}
+	return blockOverride{}, false
+}
+
 // Evaluate interfaces and pointers looking for a value that can look up the name, via a
 // struct field, method, or map key, and return the result of the lookup.
 func lookup(contextChain []interface{}, name string, allowMissing bool) (reflect.Value, error) {
@@ -615,6 +630,12 @@ func lookup(contextChain []interface{}, name string, allowMissing bool) (reflect
 
 Outer:
 	for _, ctx := range contextChain {
+		// ignore block overrides
+		_, ok := ctx.(blockOverride)
+		if ok {
+			continue
+		}
+
 		v := ctx.(reflect.Value)
 		for v.IsValid() {
 			typ := v.Type()
@@ -793,6 +814,17 @@ func (tmpl *Template) renderBlock(block *blockElement, contextChain []interface{
 	return nil
 }
 
+func (tmpl *Template) renderParent(contextChain []interface{}, overrides []blockOverride, buf io.Writer) error {
+	// add overrides to the context chain
+	chain2 := make([]interface{}, len(contextChain)+len(overrides))
+	copy(chain2[len(overrides):], contextChain)
+	for i, override := range overrides {
+		chain2[i] = override
+	}
+
+	return tmpl.renderTemplate(chain2, buf)
+}
+
 func getSectionText(elements []interface{}, buf io.Writer) error {
 	for _, element := range elements {
 		if err := getElementText(element, buf); err != nil {
@@ -879,11 +911,11 @@ func (tmpl *Template) renderElement(element interface{}, contextChain []interfac
 			return err
 		}
 	case *parentElement:
-		parent, err := getPartials(elem.prov, elem.name, elem.indent)
+		parent, overrides, err := getParent(elem.prov, elem.name, elem.indent, elem.elems)
 		if err != nil {
 			return err
 		}
-		if err := parent.renderTemplate(contextChain, buf); err != nil {
+		if err := parent.renderParent(contextChain, overrides, buf); err != nil {
 			return err
 		}
 	}

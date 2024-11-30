@@ -19,7 +19,7 @@ var disabledTests = map[string]map[string]struct{}{
 		"Triple Mustache Null Interpolation": struct{}{},
 		"Ampersand Null Interpolation":       struct{}{},
 	},
-	"~inheritance.json": {}, // not implemented
+	// "~inheritance.json": {}, // not implemented
 	"~lambdas.json": {
 		"Interpolation":                        struct{}{},
 		"Interpolation - Expansion":            struct{}{},
