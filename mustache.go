@@ -598,10 +598,9 @@ type blockOverride struct {
 	elems []interface{}
 }
 
-func lookupBlockOverride(contextChain []interface{}, name string) (blockOverride, bool) {
-	for _, ctx := range contextChain {
-		bo, ok := ctx.(blockOverride)
-		if ok && bo.name == name {
+func lookupBlockOverride(blockOverrides []blockOverride, name string) (blockOverride, bool) {
+	for _, bo := range blockOverrides {
+		if bo.name == name {
 			return bo, true
 		}
 	}
@@ -630,12 +629,6 @@ func lookup(contextChain []interface{}, name string, allowMissing bool) (reflect
 
 Outer:
 	for _, ctx := range contextChain {
-		// ignore block overrides
-		_, ok := ctx.(blockOverride)
-		if ok {
-			continue
-		}
-
 		v := ctx.(reflect.Value)
 		for v.IsValid() {
 			typ := v.Type()
@@ -713,7 +706,7 @@ loop:
 	return v
 }
 
-func (tmpl *Template) renderSection(section *sectionElement, contextChain []interface{}, buf io.Writer) error {
+func (tmpl *Template) renderSection(section *sectionElement, contextChain []interface{}, overrides []blockOverride, buf io.Writer) error {
 	value, err := lookup(contextChain, section.name, true)
 	if err != nil {
 		return err
@@ -751,7 +744,7 @@ func (tmpl *Template) renderSection(section *sectionElement, contextChain []inte
 					return "", err
 				}
 				var buf bytes.Buffer
-				if err := tmpl.renderTemplate(contextChain, &buf); err != nil {
+				if err := tmpl.renderTemplate(contextChain, overrides, &buf); err != nil {
 					return "", err
 				}
 				return buf.String(), nil
@@ -779,7 +772,7 @@ func (tmpl *Template) renderSection(section *sectionElement, contextChain []inte
 	for _, ctx := range contexts {
 		chain2[0] = ctx
 		for _, elem := range section.elems {
-			if err := tmpl.renderElement(elem, chain2, buf); err != nil {
+			if err := tmpl.renderElement(elem, chain2, overrides, buf); err != nil {
 				return err
 			}
 		}
@@ -787,42 +780,38 @@ func (tmpl *Template) renderSection(section *sectionElement, contextChain []inte
 	return nil
 }
 
-func (tmpl *Template) renderBlock(block *blockElement, contextChain []interface{}, buf io.Writer) error {
-	value, err := lookup(contextChain, block.name, true)
-	if err != nil {
-		return err
-	}
-	var context = contextChain[0].(reflect.Value)
-	var contexts = []interface{}{}
-	// if the value is nil, check if it's an inverted section
-	isEmpty := isEmpty(value)
-	if isEmpty {
-		// render default content
-		contexts = append(contexts, context)
-	}
+func (tmpl *Template) renderBlock(block *blockElement, contextChain []interface{}, overrides []blockOverride, buf io.Writer) error {
+	override, ok := lookupBlockOverride(overrides, block.name)
 
-	chain2 := make([]interface{}, len(contextChain)+1)
-	copy(chain2[1:], contextChain)
-	for _, ctx := range contexts {
-		chain2[0] = ctx
+	if !ok {
+		// render default content
 		for _, elem := range block.elems {
-			if err := tmpl.renderElement(elem, chain2, buf); err != nil {
+			if err := tmpl.renderElement(elem, contextChain, overrides, buf); err != nil {
 				return err
 			}
 		}
 	}
+
+	// render override content
+	overrides2 := make([]blockOverride, len(overrides))
+	copy(overrides2, overrides)
+	for i, o := range overrides2 {
+		if o.name == block.name {
+			overrides2 = append(overrides2[:i], overrides2[i+1:]...)
+			break
+		}
+	}
+	for _, elem := range override.elems {
+		if err := tmpl.renderElement(elem, contextChain, overrides2, buf); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
 func (tmpl *Template) renderParent(contextChain []interface{}, overrides []blockOverride, buf io.Writer) error {
-	// add overrides to the context chain
-	chain2 := make([]interface{}, len(contextChain)+len(overrides))
-	copy(chain2[len(overrides):], contextChain)
-	for i, override := range overrides {
-		chain2[i] = override
-	}
-
-	return tmpl.renderTemplate(chain2, buf)
+	return tmpl.renderTemplate(contextChain, overrides, buf)
 }
 
 func getSectionText(elements []interface{}, buf io.Writer) error {
@@ -870,7 +859,7 @@ func getElementText(element interface{}, buf io.Writer) error {
 	return nil
 }
 
-func (tmpl *Template) renderElement(element interface{}, contextChain []interface{}, buf io.Writer) error {
+func (tmpl *Template) renderElement(element interface{}, contextChain []interface{}, overrides []blockOverride, buf io.Writer) error {
 	switch elem := element.(type) {
 	case *textElement:
 		_, err := buf.Write(elem.text)
@@ -895,7 +884,7 @@ func (tmpl *Template) renderElement(element interface{}, contextChain []interfac
 			}
 		}
 	case *sectionElement:
-		if err := tmpl.renderSection(elem, contextChain, buf); err != nil {
+		if err := tmpl.renderSection(elem, contextChain, overrides, buf); err != nil {
 			return err
 		}
 	case *partialElement:
@@ -903,11 +892,11 @@ func (tmpl *Template) renderElement(element interface{}, contextChain []interfac
 		if err != nil {
 			return err
 		}
-		if err := partial.renderTemplate(contextChain, buf); err != nil {
+		if err := partial.renderTemplate(contextChain, overrides, buf); err != nil {
 			return err
 		}
 	case *blockElement:
-		if err := tmpl.renderBlock(elem, contextChain, buf); err != nil {
+		if err := tmpl.renderBlock(elem, contextChain, overrides, buf); err != nil {
 			return err
 		}
 	case *parentElement:
@@ -922,9 +911,9 @@ func (tmpl *Template) renderElement(element interface{}, contextChain []interfac
 	return nil
 }
 
-func (tmpl *Template) renderTemplate(contextChain []interface{}, buf io.Writer) error {
+func (tmpl *Template) renderTemplate(contextChain []interface{}, overrides []blockOverride, buf io.Writer) error {
 	for _, elem := range tmpl.elems {
-		if err := tmpl.renderElement(elem, contextChain, buf); err != nil {
+		if err := tmpl.renderElement(elem, contextChain, overrides, buf); err != nil {
 			return err
 		}
 	}
@@ -939,7 +928,7 @@ func (tmpl *Template) FRender(out io.Writer, context ...interface{}) error {
 		val := reflect.ValueOf(c)
 		contextChain = append(contextChain, val)
 	}
-	return tmpl.renderTemplate(contextChain, out)
+	return tmpl.renderTemplate(contextChain, []blockOverride{}, out)
 }
 
 // Render uses the given data source - generally a map or struct - to render
