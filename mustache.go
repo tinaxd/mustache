@@ -793,25 +793,13 @@ func (tmpl *Template) renderBlock(block *blockElement, contextChain []interface{
 	}
 
 	// render override content
-	overrides2 := make([]blockOverride, len(overrides))
-	copy(overrides2, overrides)
-	for i, o := range overrides2 {
-		if o.name == block.name {
-			overrides2 = append(overrides2[:i], overrides2[i+1:]...)
-			break
-		}
-	}
 	for _, elem := range override.elems {
-		if err := tmpl.renderElement(elem, contextChain, overrides2, buf); err != nil {
+		if err := tmpl.renderElement(elem, contextChain, overrides, buf); err != nil {
 			return err
 		}
 	}
 
 	return nil
-}
-
-func (tmpl *Template) renderParent(contextChain []interface{}, overrides []blockOverride, buf io.Writer) error {
-	return tmpl.renderTemplate(contextChain, overrides, buf)
 }
 
 func getSectionText(elements []interface{}, buf io.Writer) error {
@@ -900,11 +888,21 @@ func (tmpl *Template) renderElement(element interface{}, contextChain []interfac
 			return err
 		}
 	case *parentElement:
-		parent, overrides, err := getParent(elem.prov, elem.name, elem.indent, elem.elems)
+		parent, err := getParent(elem.prov, elem.name, elem.indent)
 		if err != nil {
 			return err
 		}
-		if err := parent.renderParent(contextChain, overrides, buf); err != nil {
+
+		overrides2 := []blockOverride{}
+		for _, elem := range elem.elems {
+			if bo, ok := elem.(*blockElement); ok {
+				overrides2 = append(overrides2, blockOverride{bo.name, bo.elems})
+			}
+		}
+
+		overridesCombined := append(overrides, overrides2...)
+
+		if err := parent.renderTemplate(contextChain, overridesCombined, buf); err != nil {
 			return err
 		}
 	}
